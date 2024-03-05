@@ -63,6 +63,34 @@ def read_dataset(file_path):
             paragraphs.append(tokens)  # Concatenate tokens into a single string for each paragraph
             paragraphs_labels.append(labels)
         return paragraphs, paragraphs_labels
+    
+def encode_tags(tags, encodings):
+    labels = [[tag2id[tag] for tag in doc] for doc in tags]
+    encoded_labels = []
+    for doc_labels, doc_offset in zip(labels, encodings.offset_mapping):
+        # create an empty array of -100
+        doc_enc_labels = np.ones(len(doc_offset),dtype=int) * -100
+        arr_offset = np.array(doc_offset)
+
+        # set labels whose first offset position is 0 and the second is not 0
+        doc_enc_labels[(arr_offset[:,0] == 0) & (arr_offset[:,1] != 0)] = doc_labels
+        encoded_labels.append(doc_enc_labels.tolist())
+
+    return encoded_labels
+
+class PersuasiveEssaysDataset(torch.utils.data.Dataset):
+    def __init__(self, encodings, labels):
+        self.encodings = encodings
+        self.labels = labels
+
+    def __getitem__(self, idx):
+        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item['labels'] = torch.tensor(self.labels[idx])
+        return item
+
+    def __len__(self):
+        return len(self.labels)
+
 
 model_name = 'distilbert-base-uncased'
 tokenizer = DistilBertTokenizerFast.from_pretrained(model_name)
@@ -86,36 +114,9 @@ train_encodings = tokenizer.batch_encode_plus(X_train, is_split_into_words=True,
 val_encodings = tokenizer.batch_encode_plus(X_val, is_split_into_words=True, add_special_tokens=True, return_offsets_mapping=True, max_length=max_seq_length, padding='max_length')
 test_encodings = tokenizer.batch_encode_plus(X_test, is_split_into_words=True, add_special_tokens=True, return_offsets_mapping=True, max_length=max_seq_length, padding='max_length')
 
-def encode_tags(tags, encodings):
-    labels = [[tag2id[tag] for tag in doc] for doc in tags]
-    encoded_labels = []
-    for doc_labels, doc_offset in zip(labels, encodings.offset_mapping):
-        # create an empty array of -100
-        doc_enc_labels = np.ones(len(doc_offset),dtype=int) * -100
-        arr_offset = np.array(doc_offset)
-
-        # set labels whose first offset position is 0 and the second is not 0
-        doc_enc_labels[(arr_offset[:,0] == 0) & (arr_offset[:,1] != 0)] = doc_labels
-        encoded_labels.append(doc_enc_labels.tolist())
-
-    return encoded_labels
-
 train_labels = encode_tags(y_train, train_encodings)
 val_labels = encode_tags(y_val, val_encodings)
 test_labels = encode_tags(y_test, test_encodings)
-
-class PersuasiveEssaysDataset(torch.utils.data.Dataset):
-    def __init__(self, encodings, labels):
-        self.encodings = encodings
-        self.labels = labels
-
-    def __getitem__(self, idx):
-        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
-        item['labels'] = torch.tensor(self.labels[idx])
-        return item
-
-    def __len__(self):
-        return len(self.labels)
 
 train_encodings.pop("offset_mapping") # we don't want to pass this to the model
 val_encodings.pop("offset_mapping")
@@ -138,7 +139,7 @@ optim = torch.optim.AdamW(model.parameters(), lr=5e-5)
 
 epochs = 100
 
-for epoch in tqdm(range(epochs)):
+for epoch in tqdm(range(5)):
     model.train()
     
     train_predictions = []
@@ -188,3 +189,5 @@ for epoch in tqdm(range(epochs)):
     val_f1 = f1_score(true_labels, val_predictions)
     
     print(f"Epoch {epoch+1}, Training Loss:' {loss:.4f}, Training Accuracy: {train_accuracy:.4f}, Validation Loss: {avg_val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}, Val F1-Score: {val_f1:.4f}")
+    
+    model.save_pretrained('models/distilbert/seqtag_pl_cp')
